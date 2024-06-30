@@ -24,7 +24,11 @@ def run_bot():
 
     @client.event
     async def on_ready():
+        #Sync for a single guild
         await tree.sync(guild=discord.Object(id=""))
+        #Sync for all guilds
+        # await tree.sync()
+
 
         print(f"{client.user} is now ready.")
 
