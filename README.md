@@ -18,4 +18,3 @@ If you want to host the bot on multiple servers, uncomment the line to sync for 
 
 
 
-creds: https://www.youtube.com/@ethancox2025
