@@ -1,10 +1,11 @@
 # RexTunes
 
-A simple Discord music bot that plays songs from YouTube in your voice channels.
+A simple Discord music bot that plays songs from YouTube and Spotify playlists in your voice channels.
 
 ## Features
 
 - Play songs from YouTube by title or URL
+- Play entire Spotify playlists with a single command
 - Queue system for multiple songs
 - Basic playback controls (pause, resume, skip)
 - Clean and simple slash command interface
@@ -16,6 +17,7 @@ Before setting up RexTunes, make sure you have the following installed:
 - Python 3.8 or higher
 - [FFmpeg](https://ffmpeg.org/download.html) installed and in your system PATH
 - A Discord account and a Discord application with a bot
+- A Spotify Developer account for playlist integration
 
 ## Installation
 
@@ -43,7 +45,16 @@ Before setting up RexTunes, make sure you have the following installed:
    ```
    token=YOUR_DISCORD_BOT_TOKEN
    server_id=YOUR_DISCORD_SERVER_ID
+   spot_id=YOUR_SPOTIFY_CLIENT_ID
+   spot_secret=YOUR_SPOTIFY_CLIENT_SECRET
    ```
+
+## Spotify API Setup
+
+1. Go to the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard/)
+2. Create a new application
+3. Note your Client ID and Client Secret
+4. Add these credentials to your `.env` file as `spot_id` and `spot_secret`
 
 ## FFmpeg Installation
 
@@ -84,9 +95,11 @@ RexTunes requires FFmpeg to process audio streams. Installation instructions var
 
 2. Use the following slash commands in your Discord server:
    - `/play [song_title]` - Play a song or add it to the queue
+   - `/play [spotify_playlist_url]` - Play an entire Spotify playlist
    - `/pause` - Pause the current song
    - `/resume` - Resume playback
    - `/skip` - Skip to the next song in the queue
+   - `/queue` - Show the current song queue
    - `/stop` - Stop playback and disconnect the bot
 
 ## Multi-Server Support
@@ -109,8 +122,10 @@ By default, the bot is configured to work with a single Discord server specified
 - **Bot doesn't respond to commands**: Make sure the bot has the correct permissions and that slash commands are synced
 - **Audio doesn't play**: Check that FFmpeg is correctly installed and in your PATH
 - **Error finding songs**: Check your internet connection and YouTube search terms
+- **Spotify playlists not working**: Verify your Spotify API credentials in the `.env` file
 
 ## Acknowledgments
 
 - Uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for YouTube integration
 - Built with [discord.py](https://github.com/Rapptz/discord.py)
+- Uses [spotipy](https://github.com/plamere/spotipy) for Spotify integration
