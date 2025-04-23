@@ -11,7 +11,8 @@ __pycache__/
 dist/
 build/
 *.egg-info/
-
+*.yml
+Dockerfile
 # Environment variables
 .env
 .env.local
