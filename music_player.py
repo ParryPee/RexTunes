@@ -11,6 +11,7 @@ class MusicPlayer:
         self.queues = {}
         self.voice_clients = {}
         self.current_songs = {}  # Track currently playing songs
+        self.text_channels = {} # Track text channels 
         
         spot_id = os.getenv("spot_id")
         spot_secret = os.getenv("spot_secret")
@@ -104,6 +105,8 @@ class MusicPlayer:
         # Initialize queue if it doesn't exist
         if guild_id not in self.queues:
             self.queues[guild_id] = []
+        if guild_id not in self.text_channels:
+            self.text_channels[guild_id] = interaction.channel_id
             
         try:
             # Get playlist info in List([track_name, artist_name])
@@ -190,6 +193,8 @@ class MusicPlayer:
         # Initialize queue if it doesn't exist
         if guild_id not in self.queues:
             self.queues[guild_id] = []
+        if guild_id not in self.text_channels:
+            self.text_channels[guild_id] = interaction.channel_id
         
         try:
             # Get song info
@@ -250,10 +255,18 @@ class MusicPlayer:
                     
                 # Find a text channel to notify about the next song
                 text_channel = None
-                for channel in guild.text_channels:
-                    if channel.permissions_for(guild.me).send_messages:
-                        text_channel = channel
-                        break
+                if guild_id in self.text_channels:
+                    channel_id = self.text_channels[guild_id]
+                    text_channel = client.get_channel(channel_id)
+                                    # If channel no longer exists or bot doesn't have permissions, log it
+                    if text_channel is None or not text_channel.permissions_for(guild.me).send_messages:
+                        print(f"Cannot send to original channel {channel_id}, looking for alternative")
+                        text_channel = None
+                if text_channel == None:
+                    for channel in guild.text_channels:
+                        if channel.permissions_for(guild.me).send_messages:
+                            text_channel = channel
+                            break
                 
                 # Get song info
                 loop = asyncio.get_event_loop()
@@ -304,3 +317,57 @@ class MusicPlayer:
                             await text_channel.send(f"Failed to play next song: {str(e)}")
                 except:
                     pass
+    async def check_empty_voice_channels(self, client):
+        """
+        Check if the bot is alone in any voice channels and disconnect if so.
+        This should be called periodically.
+        """
+        # Create a list of guild IDs to avoid modifying dictionary during iteration
+        guild_ids = list(self.voice_clients.keys())
+        
+        for guild_id in guild_ids:
+            try:
+                # Get the voice client for this guild
+                voice_client = self.voice_clients.get(guild_id)
+                if not voice_client or not voice_client.is_connected():
+                    continue
+                
+                # Get the voice channel
+                channel = voice_client.channel
+                
+                # Count members in the voice channel (excluding bots)
+                human_members = sum(1 for member in channel.members if not member.bot)
+                
+                # If no human members are in the channel, disconnect
+                if human_members == 0:
+                    print(f"No users in voice channel {channel.name} ({channel.id}), disconnecting...")
+                    
+                    # Try to send a message before disconnecting
+                    if guild_id in self.text_channels:
+                        try:
+                            text_channel = client.get_channel(self.text_channels[guild_id])
+                            if text_channel:
+                                await text_channel.send("Leaving voice channel because everyone left!")
+                        except Exception as e:
+                            print(f"Failed to send leave message: {e}")
+                    
+                    # Stop playback if playing
+                    if voice_client.is_playing():
+                        voice_client.stop()
+                    
+                    # Disconnect from voice channel
+                    await voice_client.disconnect()
+                    
+                    # Clean up resources
+                    del self.voice_clients[guild_id]
+                    
+                    # Clear the queue
+                    if guild_id in self.queues:
+                        self.queues[guild_id] = []
+                        
+                    # Clear current song reference
+                    if guild_id in self.current_songs:
+                        del self.current_songs[guild_id]
+                        
+            except Exception as e:
+                print(f"Error checking empty voice channel for guild {guild_id}: {e}")

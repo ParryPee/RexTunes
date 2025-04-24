@@ -46,6 +46,7 @@ def register_commands(tree, client, music_player, guild_id):
     async def stop(interaction: discord.Interaction):
         try:
             guild_id = interaction.guild_id
+            music_player.text_channels[guild_id] = interaction.channel_id
             if guild_id in music_player.voice_clients:
                 # Stop playback
                 if music_player.voice_clients[guild_id].is_playing():
@@ -67,6 +68,9 @@ def register_commands(tree, client, music_player, guild_id):
                 # Clear current song reference
                 if guild_id in music_player.current_songs:
                     del music_player.current_songs[guild_id]
+                # Clear the text channel reference
+                if guild_id in music_player.text_channels:
+                    del music_player.text_channels[guild_id]
             else:
                 await interaction.response.send_message("Not connected to a voice channel!")
         except Exception as e:
