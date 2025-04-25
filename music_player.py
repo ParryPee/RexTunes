@@ -239,26 +239,26 @@ class MusicPlayer:
         # Clear current song reference
         if guild_id in self.current_songs:
             del self.current_songs[guild_id]
-            
+                
         # Check if queue exists and has songs
         if guild_id in self.queues and self.queues[guild_id] and guild_id in self.voice_clients:
             try:
                 # Get the next song from queue
                 next_song = self.queues[guild_id].pop(0)
                 self.current_songs[guild_id] = next_song
-                
+                    
                 # Get guild from client
                 guild = client.get_guild(guild_id)
                 if not guild:
                     print(f"Could not find guild with ID {guild_id}")
                     return
-                    
+                        
                 # Find a text channel to notify about the next song
                 text_channel = None
                 if guild_id in self.text_channels:
                     channel_id = self.text_channels[guild_id]
                     text_channel = client.get_channel(channel_id)
-                                    # If channel no longer exists or bot doesn't have permissions, log it
+                    # If channel no longer exists or bot doesn't have permissions, log it
                     if text_channel is None or not text_channel.permissions_for(guild.me).send_messages:
                         print(f"Cannot send to original channel {channel_id}, looking for alternative")
                         text_channel = None
@@ -267,39 +267,64 @@ class MusicPlayer:
                         if channel.permissions_for(guild.me).send_messages:
                             text_channel = channel
                             break
+                    
+                # Get song info - Add retry mechanism
+                retry_count = 0
+                max_retries = 3
+                success = False
                 
-                # Get song info
-                loop = asyncio.get_event_loop()
-                data = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(next_song, download=False))
-                
-                if not data or 'url' not in data:
-                    print(f"Failed to get URL for {next_song}")
+                while retry_count < max_retries and not success:
+                    try:
+                        loop = asyncio.get_event_loop()
+                        data = await loop.run_in_executor(None, lambda: self.ytdl.extract_info(next_song, download=False))
+                        
+                        if data and 'url' in data:
+                            success = True
+                        else:
+                            retry_count += 1
+                            print(f"Retry {retry_count} for {next_song} - no URL found")
+                            await asyncio.sleep(1)  # Short delay between retries
+                    except Exception as e:
+                        retry_count += 1
+                        print(f"Retry {retry_count} for {next_song} - error: {e}")
+                        await asyncio.sleep(1)  # Short delay between retries
+                        
+                if not success:
+                    print(f"Failed to get URL for {next_song} after {max_retries} retries")
                     if text_channel:
-                        await text_channel.send("Failed to play next song - couldn't process audio")
+                        await text_channel.send(f"Failed to play song, skipping to next one")
                     # Try playing the next one in queue
                     await self.play_next(guild_id, bot_loop, client)
                     return
-                
+                    
                 source_url = data['url']
                 title = data.get('title', next_song)
-                
-                # Create and play the audio source
-                player = discord.FFmpegPCMAudio(source_url, **self.ffmpeg_options)
-                
-                if guild_id in self.voice_clients and self.voice_clients[guild_id].is_connected():
-                    self.voice_clients[guild_id].play(
-                        player, 
-                        after=lambda e: asyncio.run_coroutine_threadsafe(
-                            self.play_next(guild_id, bot_loop, client), 
-                            bot_loop
-                        )
-                    )
                     
-                    # Notify about the new song
+                # Create and play the audio source with improved error handling
+                try:
+                    player = discord.FFmpegPCMAudio(source_url, **self.ffmpeg_options)
+                    
+                    # Double check that voice client is still connected
+                    if guild_id in self.voice_clients and self.voice_clients[guild_id].is_connected():
+                        self.voice_clients[guild_id].play(
+                            player, 
+                            after=lambda e: asyncio.run_coroutine_threadsafe(
+                                self.play_next(guild_id, bot_loop, client), 
+                                bot_loop
+                            )
+                        )
+                        
+                        # Notify about the new song
+                        if text_channel:
+                            await text_channel.send(f"Now playing: {title}")
+                    else:
+                        print(f"Voice client disconnected for guild {guild_id}")
+                except Exception as e:
+                    print(f"Error playing audio: {e}")
                     if text_channel:
-                        await text_channel.send(f"Now playing: {title}")
-                else:
-                    print(f"Voice client disconnected for guild {guild_id}")
+                        await text_channel.send(f"Error playing this song, skipping to next")
+                    # Try playing the next one in queue
+                    await self.play_next(guild_id, bot_loop, client)
             
             except Exception as e:
                 print(f"Error in play_next function: {e}")
@@ -315,8 +340,8 @@ class MusicPlayer:
                         
                         if text_channel:
                             await text_channel.send(f"Failed to play next song: {str(e)}")
-                except:
-                    pass
+                except Exception as inner_e:
+                    print(f"Error notifying about failure: {inner_e}")
     async def check_empty_voice_channels(self, client):
         """
         Check if the bot is alone in any voice channels and disconnect if so.
