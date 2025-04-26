@@ -12,7 +12,8 @@ class MusicPlayer:
         self.voice_clients = {}
         self.current_songs = {}  # Track currently playing songs
         self.text_channels = {} # Track text channels 
-        
+        self.background_tasks = {} # Track background playlist processing tasks
+
         spot_id = os.getenv("spot_id")
         spot_secret = os.getenv("spot_secret")
         self.sp = Spotify(spot_secret, spot_id)
@@ -99,7 +100,7 @@ class MusicPlayer:
             return None, None
             
     async def play_playlist(self, interaction, playlist_url):
-        """Play or add songs from a playlist"""
+        """Play or add songs from a playlist using batch processing"""
         guild_id = interaction.guild_id
         
         # Initialize queue if it doesn't exist
@@ -114,11 +115,17 @@ class MusicPlayer:
             
             if not playlist_info:
                 return False, "Couldn't find or access that playlist!"
-                
-            # Add songs to the queue
-            added_songs = []
             
-            for song in playlist_info:
+            # Define batch size for initial loading
+            initial_batch_size = 5
+            
+            # Process first batch to start playback quickly
+            first_batch = playlist_info[:initial_batch_size]
+            remaining_songs = playlist_info[initial_batch_size:]
+            
+            # Process first batch
+            added_songs = []
+            for song in first_batch:
                 # Form search query - song name + artist name
                 search_query = f"{song[0]} {song[1]['name']}"
                 song_url, title = await self.search_youtube(search_query)
@@ -130,30 +137,144 @@ class MusicPlayer:
             
             if not added_songs:
                 return False, "Couldn't find any songs from that playlist!"
-                
+            
+            # Start a background task to process remaining songs
+            asyncio.create_task(self._process_remaining_playlist_songs(
+                remaining_songs, 
+                guild_id, 
+                interaction.client
+            ))
+            
             # Check if already playing music
             if guild_id in self.voice_clients and self.voice_clients[guild_id].is_playing():
-                # Add all songs to queue
+                # Add first batch songs to queue
                 for song_url, title in added_songs:
                     self.queues[guild_id].append(song_url)
                     
-                return True, f"Added {len(added_songs)} songs from the playlist to queue."
+                return True, f"Added {len(added_songs)} songs from the playlist to queue. Processing {len(remaining_songs)} more songs in the background..."
             else:
                 # Play first song immediately
                 first_song_url, first_title = added_songs[0]
                 
-                # Add remaining songs to queue
+                # Add remaining songs from first batch to queue
                 for song_url, title in added_songs[1:]:
                     self.queues[guild_id].append(song_url)
                 
                 # Play first song
                 await self.play_immediate(guild_id, first_song_url, interaction.client)
                 
-                return True, f"Playing: {first_title}\nAdded {len(added_songs) - 1} more songs to the queue."
+                return True, f"Playing: {first_title}\nAdded {len(added_songs) - 1} songs to the queue. Processing {len(remaining_songs)} more songs in the background..."
                 
         except Exception as e:
             print(f"Error in play_playlist function: {e}")
             return False, f"Error playing the playlist: {str(e)}"
+
+    async def _process_remaining_playlist_songs(self, remaining_songs, guild_id, client):
+        """Process remaining playlist songs in background"""
+        try:
+            # Get reference to text channel for status updates
+            text_channel = None
+            if guild_id in self.text_channels:
+                channel_id = self.text_channels[guild_id]
+                text_channel = client.get_channel(channel_id)
+            
+            # Process songs in smaller batches to avoid overwhelming resources
+            batch_size = 10
+            total_remaining = len(remaining_songs)
+            processed_count = 0
+            is_cancelled = False
+            
+            # Track the task in a class attribute if not already there
+            if not hasattr(self, 'background_tasks'):
+                self.background_tasks = {}
+            
+            # Store the task for this guild
+            self.background_tasks[guild_id] = asyncio.current_task()
+            
+            # Process in batches
+            for i in range(0, len(remaining_songs), batch_size):
+                # Multiple checks to ensure we should still be processing
+                if any([
+                    # Bot disconnected or not in voice clients dict
+                    guild_id not in self.voice_clients,
+                    # Voice client exists but is not connected
+                    guild_id in self.voice_clients and not self.voice_clients[guild_id].is_connected(),
+                    # Queue for this guild has been deleted
+                    guild_id not in self.queues,
+                    # Explicit cancellation flag
+                    is_cancelled
+                ]):
+                    print(f"Voice client disconnected for guild {guild_id}, stopping playlist processing")
+                    if guild_id in self.background_tasks:
+                        del self.background_tasks[guild_id]
+                    return
+                    
+                # Get current batch
+                current_batch = remaining_songs[i:i+batch_size]
+                
+                # Process batch
+                batch_added = 0
+                for song in current_batch:
+                    # Double-check connection hasn't been lost during song processing
+                    if guild_id not in self.voice_clients or not self.voice_clients[guild_id].is_connected():
+                        is_cancelled = True
+                        break
+                        
+                    # Form search query - song name + artist name
+                    search_query = f"{song[0]} {song[1]['name']}"
+                    song_url, title = await self.search_youtube(search_query)
+                    
+                    if song_url:
+                        # Add to queue only if queue still exists
+                        if guild_id in self.queues:
+                            self.queues[guild_id].append(song_url)
+                            batch_added += 1
+                    
+                    # Small delay to avoid rate limiting
+                    await asyncio.sleep(0.5)
+                
+                processed_count += len(current_batch)
+                
+                # Stop if cancelled
+                if is_cancelled:
+                    print(f"Playlist processing cancelled for guild {guild_id}")
+                    break
+                    
+                # Optional: Send progress update to channel every few batches
+                if text_channel and (i + batch_size) % (batch_size * 3) == 0:
+                    # Make sure the channel still exists and is accessible
+                    try:
+                        progress_percent = int((processed_count / total_remaining) * 100)
+                        await text_channel.send(f"Playlist loading progress: {progress_percent}% ({processed_count}/{total_remaining})")
+                    except Exception as channel_error:
+                        print(f"Could not send progress update: {channel_error}")
+                
+                # Wait a bit between batches to avoid overwhelming resources
+                await asyncio.sleep(2)
+            
+            # Notify when complete (only if not cancelled and channel is available)
+            if not is_cancelled and text_channel:
+                try:
+                    await text_channel.send(f"✅ Finished loading all {total_remaining} remaining songs from the playlist!")
+                except Exception as notification_error:
+                    print(f"Could not send completion notification: {notification_error}")
+                    
+            # Clean up task reference
+            if guild_id in self.background_tasks:
+                del self.background_tasks[guild_id]
+                
+        except Exception as e:
+            print(f"Error processing remaining playlist songs: {e}")
+            # Try to notify in text channel about the error
+            if text_channel:
+                try:
+                    await text_channel.send("⚠️ Encountered an error while processing the full playlist. Some songs might be missing.")
+                except:
+                    pass
+            
+            # Clean up task reference even on error
+            if guild_id in self.background_tasks:
+                del self.background_tasks[guild_id]
         
     async def play_immediate(self, guild_id, song_url, client):
         """Immediately play a song without interaction"""
@@ -375,6 +496,16 @@ class MusicPlayer:
                                 await text_channel.send("Leaving voice channel because everyone left!")
                         except Exception as e:
                             print(f"Failed to send leave message: {e}")
+                    
+                    # Cancel any background playlist processing tasks
+                    if hasattr(self, 'background_tasks') and guild_id in self.background_tasks:
+                        try:
+                            task = self.background_tasks[guild_id]
+                            if not task.done() and not task.cancelled():
+                                task.cancel()
+                            print(f"Cancelled background playlist processing for guild {guild_id}")
+                        except Exception as task_error:
+                            print(f"Error cancelling background task: {task_error}")
                     
                     # Stop playback if playing
                     if voice_client.is_playing():

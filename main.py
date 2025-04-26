@@ -73,6 +73,16 @@ def run_bot():
                             if text_channel:
                                 await text_channel.send("Everyone paitao me :(")
                         
+                        # Cancel any background playlist processing tasks
+                        if hasattr(music_player, 'background_tasks') and guild_id in music_player.background_tasks:
+                            try:
+                                task = music_player.background_tasks[guild_id]
+                                if not task.done() and not task.cancelled():
+                                    task.cancel()
+                                print(f"Cancelled background playlist processing for guild {guild_id}")
+                            except Exception as task_error:
+                                print(f"Error cancelling background task: {task_error}")
+                        
                         # Stop playback if playing
                         voice_client = music_player.voice_clients[guild_id]
                         if voice_client.is_playing():

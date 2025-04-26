@@ -56,6 +56,17 @@ def register_commands(tree, client, music_player, guild_id):
                 # Send response first before disconnecting
                 await interaction.response.send_message("Leaving ;-;")
                 
+                # Cancel any background playlist processing tasks
+                if hasattr(music_player, 'background_tasks') and guild_id in music_player.background_tasks:
+                    try:
+                        # Mark for cancellation (our task checks this flag)
+                        task = music_player.background_tasks[guild_id]
+                        if not task.done() and not task.cancelled():
+                            task.cancel()
+                        print(f"Cancelled background playlist processing for guild {guild_id}")
+                    except Exception as task_error:
+                        print(f"Error cancelling background task: {task_error}")
+                
                 # Then disconnect
                 await music_player.voice_clients[guild_id].disconnect()
                 
