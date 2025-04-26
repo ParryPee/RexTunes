@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 import asyncio
+import random
 
 def register_commands(tree, client, music_player, guild_id):
     """Register all slash commands with the command tree"""
@@ -218,5 +219,30 @@ def register_commands(tree, client, music_player, guild_id):
                 # If all else fails, try again with a new message
                 try:
                     await interaction.channel.send(f"Failed to show queue: {str(e)}")
+                except:
+                    pass
+    @tree.command(
+        name="shuffle",
+        description="Shuffles the current playlist",
+        guild=discord.Object(id=guild_id)
+    )
+    async def shuffle(interaction: discord.Interaction):
+        try:
+            guild_id = interaction.guild_id
+            # Check if queue exists
+            if guild_id not in music_player.queues or not music_player.queues[guild_id]:
+                await interaction.followup.send("The queue is empty!")
+                return
+            random.shuffle(music_player.queues[guild_id])
+            # Acknowledge the skip request
+            await interaction.response.send_message("Shuffling the queue....")
+        except Exception as e:
+            print(f"Error in shuffle command: {e}")
+            try:
+                await interaction.followup.send(f"Failed to shuffle playlist: {str(e)}")
+            except:
+                # If all else fails, try again with a new message
+                try:
+                    await interaction.channel.send(f"Failed to shuffle playlist: {str(e)}")
                 except:
                     pass
